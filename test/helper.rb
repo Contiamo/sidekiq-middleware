@@ -22,4 +22,4 @@ require 'sidekiq-middleware'
 Sidekiq.logger.level = Logger::ERROR
 
 require 'sidekiq/redis_connection'
-REDIS = Sidekiq::RedisConnection.create(:url => "redis://localhost/15", :namespace => 'testy')
+REDIS = Sidekiq::RedisConnection.create(:url => "redis://localhost/15")

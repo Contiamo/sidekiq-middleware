@@ -10,36 +10,48 @@ module Sidekiq
             payload.delete('jid')
             payload_hash = Digest::MD5.hexdigest(Sidekiq.dump_json(Hash[payload.sort]))
 
-            Sidekiq.redis do |conn|
-              ttl1_hash = "#{payload_hash}-1"
-              ttl2_hash = "#{payload_hash}-2"
-              ttls = { "#{ttl1_hash}" => conn.ttl(ttl1_hash), "#{ttl2_hash}" => conn.ttl(ttl2_hash) }
+            ttl1_hash = "throttling:#{payload_hash}-1"
+            ttl2_hash = "throttling:#{payload_hash}-2"
+            result = Sidekiq.redis { |conn| conn.eval THROTTLE_SCRIPT, [ttl1_hash, ttl2_hash], [throttle] }
 
-              # continue if at least one ttl is -1
-              if ttls.values.min == -1
-                # if both values are -1
-                ttl = if ttls.values.inject(&:*) == 1
-                  # put job in queue immediately
-                  yield
-                  { 'hash' => ttls.keys.first, 'expire' => throttle }
-                else
-                  # find out which key expired
-                  ttl_key = ttls.key -1
-                  # get the ttl for the non-expired key
-                  non_expired_ttl = ttls.values.inject(&:+) + 1
-                  schedule_at = non_expired_ttl.to_f + Time.now.to_f
-                  # schedule job for later execution
-                  conn.zadd('schedule', schedule_at.to_s, Sidekiq.dump_json(item))
-                  { 'hash' => "#{ttl_key}", 'expire' => non_expired_ttl + throttle }
-                end
-
-                conn.setex(ttl['hash'], ttl['expire'], 1)
+            case result.first
+            when 'schedule'
+              Sidekiq.redis do |conn|
+                schedule_at = Time.now.to_f + result.last
+                conn.zadd('schedule', schedule_at.to_s, Sidekiq.dump_json(item))
               end
+            when 'queue'
+              yield
             end
           else
             yield
           end
         end
+
+        THROTTLE_SCRIPT = <<-EOS
+          local ttl1 = redis.call('ttl', KEYS[1])
+          local ttl2 = redis.call('ttl', KEYS[2])
+          local throttle = ARGV[1]
+
+          local mttl = ttl1 * ttl2
+
+          if mttl == 1 then
+            redis.call('setex', KEYS[1], throttle, 1)
+            return { 'queue' }
+          elseif mttl < 0 then
+            if ttl1 == -1 then
+              local expiry = throttle + ttl2
+              redis.call('setex', KEYS[1], expiry, 1)
+              return { 'schedule', expiry }
+            else
+              local expiry = throttle + ttl1
+              redis.call('setex', KEYS[2], expiry, 1)
+              return { 'schedule', expiry }
+            end
+          else
+            return {}
+          end
+        EOS
       end
     end
   end
