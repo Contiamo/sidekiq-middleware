@@ -16,10 +16,8 @@ module Sidekiq
 
             case result.first
             when 'schedule'
-              Sidekiq.redis do |conn|
-                schedule_at = Time.now.to_f + result.last
-                conn.zadd('schedule', schedule_at.to_s, Sidekiq.dump_json(item))
-              end
+              item['at'] = Time.now.to_f + result.last
+              yield
             when 'queue'
               yield
             end
