@@ -2,8 +2,8 @@ module Sidekiq
   module Middleware
     module Client
       class Throttle
-        def call(worker_class, item, queue)
-          throttle = worker_class.get_sidekiq_options['throttle']
+        def call(worker_class, item, queue, redis_pool = nil)
+          throttle = worker_class.constantize.get_sidekiq_options['throttle']
 
           if throttle
             payload = item.clone
@@ -12,7 +12,12 @@ module Sidekiq
 
             ttl1_hash = "throttling:#{payload_hash}-1"
             ttl2_hash = "throttling:#{payload_hash}-2"
-            result = Sidekiq.redis { |conn| conn.eval THROTTLE_SCRIPT, [ttl1_hash, ttl2_hash], [throttle] }
+
+            result = if redis_pool
+              redis_pool.with { |conn| conn.eval THROTTLE_SCRIPT, [ttl1_hash, ttl2_hash], [throttle] }
+            else
+              Sidekiq.redis { |conn| conn.eval THROTTLE_SCRIPT, [ttl1_hash, ttl2_hash], [throttle] }
+            end
 
             case result.first
             when 'schedule'

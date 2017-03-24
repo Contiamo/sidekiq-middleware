@@ -1,4 +1,4 @@
-require "digest"
+require "digest/md5"
 require "sidekiq-middleware/version"
 require "sidekiq-middleware/core_ext"
 require "sidekiq-middleware/server/unique_jobs"
